@@ -62,12 +62,19 @@ from langchain_community.llms import HuggingFaceHub
 
 # Import streamlit
 import streamlit as st
+####################################################################
+#                    Session State Initialization
+####################################################################
+
+# Initialize the chain in session state if not already initialized
+if 'chain' not in st.session_state:
+    st.session_state.chain = None
 
 ####################################################################
 #              Config: LLM services, assistant language,...
 ####################################################################
 list_LLM_providers = [
-    ":rainbow[**OpenAI**]",
+    "**OpenAI**",
     "**Google Generative AI**",
     ":hugging_face: **HuggingFace**",
 ]
@@ -99,9 +106,9 @@ LOCAL_VECTOR_STORE_DIR = (
 ####################################################################
 #            Create app interface with streamlit
 ####################################################################
-st.set_page_config(page_title="Chat With Your Data")
+st.set_page_config(page_title="Chat With Eddy")
 
-st.title("🤖 RAG chatbot")
+st.title("🤖Welcome to Eddy!")
 
 # API keys
 st.session_state.openai_api_key = ""
@@ -173,7 +180,7 @@ def sidebar_and_documentChooser():
 
     with st.sidebar:
         st.caption(
-            "🚀 A retrieval augmented generation chatbot powered by 🔗 Langchain, Cohere, OpenAI, Google Generative AI and 🤗"
+            "🚀 A retrieval-augmented generation chatbot powered by 🔗 Langchain, Cohere, OpenAI, Google Generative AI, and 🤗 Hugging Face. Meet Eddy, the AI assistant designed to help teachers! 🧑‍🏫✨"
         )
         st.write("")
 
@@ -382,36 +389,47 @@ def delte_temp_files():
 
 def langchain_document_loader():
     """
-    Crete documnet loaders for PDF, TXT and CSV files.
+    Create document loaders for PDF, TXT, and CSV files.
     https://python.langchain.com/docs/modules/data_connection/document_loaders/file_directory
     """
 
     documents = []
+    try:
+        txt_loader = DirectoryLoader(
+            TMP_DIR.as_posix(), glob="**/*.txt", loader_cls=TextLoader, show_progress=True
+        )
+        documents.extend(txt_loader.load())
 
-    txt_loader = DirectoryLoader(
-        TMP_DIR.as_posix(), glob="**/*.txt", loader_cls=TextLoader, show_progress=True
-    )
-    documents.extend(txt_loader.load())
+        pdf_loader = DirectoryLoader(
+            TMP_DIR.as_posix(), glob="**/*.pdf", loader_cls=PyPDFLoader, show_progress=True
+        )
+        documents.extend(pdf_loader.load())
+        try:
+            csv_loader = DirectoryLoader(
+                TMP_DIR.as_posix(), glob="**/*.csv", loader_cls=CSVLoader, show_progress=True,
+                loader_kwargs={"encoding": "utf8"}
+            )
+            documents.extend(csv_loader.load())
 
-    pdf_loader = DirectoryLoader(
-        TMP_DIR.as_posix(), glob="**/*.pdf", loader_cls=PyPDFLoader, show_progress=True
-    )
-    documents.extend(pdf_loader.load())
+        except UnicodeDecodeError as e:
+            st.error(f"Error decoding CSV file: {str(e)}. Please check the file encoding.")
 
-    csv_loader = DirectoryLoader(
-        TMP_DIR.as_posix(), glob="**/*.csv", loader_cls=CSVLoader, show_progress=True,
-        loader_kwargs={"encoding":"utf8"}
-    )
-    documents.extend(csv_loader.load())
+        doc_loader = DirectoryLoader(
+            TMP_DIR.as_posix(),
+            glob="**/*.docx",
+            loader_cls=Docx2txtLoader,
+            show_progress=True,
+        )
+        documents.extend(doc_loader.load())
 
-    doc_loader = DirectoryLoader(
-        TMP_DIR.as_posix(),
-        glob="**/*.docx",
-        loader_cls=Docx2txtLoader,
-        show_progress=True,
-    )
-    documents.extend(doc_loader.load())
+        # Additional loaders (e.g., CSV, docx)
+    except FileNotFoundError as e:
+        st.error("An error occurred: " + str(e))
+    except Exception as e:
+        st.error(f"An unexpected error occurred while loading documents: {str(e)}")
+
     return documents
+
 
 
 def split_documents_to_chunks(documents):
@@ -621,7 +639,7 @@ def chain_RAG_blocks():
             st.session_state.retriever_type == list_retriever_types[0]
             and not st.session_state.cohere_api_key
         ):
-            error_messages.append(f"insert your Cohere API key")
+            error_messages.append(f"insert API key")
         if not st.session_state.uploaded_file_list:
             error_messages.append("select documents to upload")
         if st.session_state.vector_store_name == "":
@@ -629,6 +647,8 @@ def chain_RAG_blocks():
 
         if len(error_messages) == 1:
             st.session_state.error_message = "Please " + error_messages[0] + "."
+            st.warning(st.session_state.error_message)
+            return
         elif len(error_messages) > 1:
             st.session_state.error_message = (
                 "Please "
@@ -637,6 +657,8 @@ def chain_RAG_blocks():
                 + error_messages[-1]
                 + "."
             )
+            st.warning(st.session_state.error_message)
+            return
         else:
             st.session_state.error_message = ""
             try:
@@ -654,17 +676,31 @@ def chain_RAG_blocks():
                             with open(temp_file_path, "wb") as temp_file:
                                 temp_file.write(uploaded_file.read())
                         except Exception as e:
-                            error_message += e
+                            error_message += str(e)
                     if error_message != "":
                         st.warning(f"Errors: {error_message}")
 
                     # 3. Load documents with Langchain loaders
-                    documents = langchain_document_loader()
+                    try:
+                        documents = langchain_document_loader()
+                        print("Documents loaded successfully.")
+                    except Exception as e:
+                        st.error(f"Error loading documents: {str(e)}")
+                        return
 
                     # 4. Split documents to chunks
-                    chunks = split_documents_to_chunks(documents)
+                    try:
+                        chunks = split_documents_to_chunks(documents)
+                    except Exception as e:
+                        st.error(f"Error splitting documents: {str(e)}")
+                        return
+
                     # 5. Embeddings
-                    embeddings = select_embeddings_model()
+                    try:
+                        embeddings = select_embeddings_model()
+                    except Exception as e:
+                        st.error(f"Error generating embeddings: {str(e)}")
+                        return
 
                     # 6. Create a vectorstore
                     persist_directory = (
@@ -682,6 +718,8 @@ def chain_RAG_blocks():
                         st.info(
                             f"Vectorstore **{st.session_state.vector_store_name}** is created succussfully."
                         )
+                        print("Vectorstore created successfully.")
+                        
 
                         # 7. Create retriever
                         st.session_state.retriever = create_retriever(
@@ -695,6 +733,7 @@ def chain_RAG_blocks():
                             cohere_model="rerank-multilingual-v2.0",
                             cohere_top_n=10,
                         )
+                        
 
                         # 8. Create memory and ConversationalRetrievalChain
                         (
@@ -705,12 +744,18 @@ def chain_RAG_blocks():
                             chain_type="stuff",
                             language=st.session_state.assistant_language,
                         )
+                        
+                        # Check if chain was successfully initialized
+                        if st.session_state.chain is None:
+                            st.error("Chain was not initialized properly.")
+                        else:
+                            st.info("Chain initialized successfully.")
 
                         # 9. Cclear chat_history
                         clear_chat_history()
 
                     except Exception as e:
-                        st.error(e)
+                        st.error(f"An error occurred during chain initialization: {str(e)}")
 
             except Exception as error:
                 st.error(f"An error occurred: {error}")
@@ -848,6 +893,8 @@ Standalone question:""",
                 "max_new_tokens": 1024,
             },
         )
+        standalone_query_generation_llm.client.api_url = "https://api-inference.huggingface.co/models/" + st.session_state.selected_model
+
         response_generation_llm = HuggingFaceHub(
             repo_id=st.session_state.selected_model,
             huggingfacehub_api_token=st.session_state.hf_api_key,
@@ -858,6 +905,7 @@ Standalone question:""",
                 "max_new_tokens": 1024,
             },
         )
+        response_generation_llm.client.api_url = "https://api-inference.huggingface.co/models/" + st.session_state.selected_model
 
     # 5. Create the ConversationalRetrievalChain
 
@@ -869,7 +917,7 @@ Standalone question:""",
         memory=memory,
         retriever=retriever,
         chain_type=chain_type,
-        verbose=False,
+        verbose=True,
         return_source_documents=True,
     )
 
@@ -894,6 +942,10 @@ def clear_chat_history():
 
 def get_response_from_LLM(prompt):
     """invoke the LLM, get response, and display results (answer and source documents)."""
+    if st.session_state.chain is None:
+        st.warning("The chain has not been initialized. Please create a vectorstore first.")
+        return
+
     try:
         # 1. Invoke LLM
         response = st.session_state.chain.invoke({"question": prompt})
@@ -940,7 +992,7 @@ def chatbot():
     st.divider()
     col1, col2 = st.columns([7, 3])
     with col1:
-        st.subheader("Chat with your data")
+        st.subheader("Chat With Eddy")
     with col2:
         st.button("Clear Chat History", on_click=clear_chat_history)
 
